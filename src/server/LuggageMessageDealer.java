@@ -21,12 +21,8 @@ public class LuggageMessageDealer extends MessageDealer {
 		try{
 			BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream()));
 			BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(connection.getOutputStream()));
-			writer.write("weight limit:100;price:10");
+			writer.write("weight:50,price:100;weight:70,price:200");
 			writer.flush();
-			String line;
-			while((line = reader.readLine()) != null){
-				System.out.println(line);
-			}
 		} catch(SocketTimeoutException e){
 			System.out.println("connection timeout");
 		} catch (IOException e) {
