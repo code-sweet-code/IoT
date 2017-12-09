@@ -1,0 +1,243 @@
+// This #include statement was automatically added by the Particle IDE.
+#include <Adafruit_SSD1306.h>
+
+TCPClient client;
+byte defaultServer[] = {192,168,0,14};
+int defaultPort = 8888;
+int led = D7;
+int inputPin = A1;
+#define LIMIT "weight"
+int limitedWeight[10] = {0};
+#define PRICE "price"
+int overPrice[10] = {0};
+bool connLock = false;
+
+#define OLED_DC     D3
+#define OLED_CS     D4
+#define OLED_RESET  D5
+Adafruit_SSD1306 display(OLED_DC, OLED_RESET, OLED_CS);
+
+void setup() {
+    Serial.begin(9600);
+    pinMode(led, OUTPUT);
+    Particle.function("do",commandReceiver);
+    
+    display.begin(SSD1306_SWITCHCAPVCC);
+    
+}
+
+void displayOnScreen(int weight, int price){
+    display.clearDisplay();
+    display.setTextSize(1);
+    display.setCursor(0,25);
+    display.setTextColor(WHITE, BLACK);
+    display.println("Weight: "+String(weight)+" lb");
+    display.println("");
+    display.println("Price: $ "+String(price));
+    display.display();
+    delay(2000);
+    clearScreen();
+}
+
+void displayOnScreen(String str){
+    display.clearDisplay();
+    display.setTextSize(1);
+    display.setCursor(0,0);
+    display.setTextColor(WHITE, BLACK);
+    display.println(str);
+    display.display();  
+    delay(2000);
+    clearScreen();
+}
+
+void clearScreen(){
+    display.clearDisplay();
+    display.println("");
+    display.display();
+}
+
+void loop() {
+    int value = analogRead(inputPin);
+    float voltage = value*0.0008;
+    int ohm = (int)10*voltage/(3.3-voltage);
+    //Serial.println(String(ohm)+"kΩ");
+    if(stadyCheck(ohm) == true && ohm > 900){
+        int weight = getFakeWeight(ohm);
+        triggerSensor(weight);
+    }
+    if (!client.connected())
+    {
+        disConnect();
+    }else{
+        
+        size_t size = 0;
+        
+        while ((size = client.available()) > 0)
+        {
+            Serial.println("response size is "+ String(size));
+            unsigned char* buff = (unsigned char*)malloc(size*sizeof(unsigned char));
+            client.read(buff, size);
+            Serial.println(String((char*)buff));
+            respAnalyzer((char*)buff);
+            free(buff);
+        }
+        
+    }
+}
+
+int stadyTimes = 0;
+int lastValue = 0;
+bool stadyCheck(int value){
+    int gap = value - lastValue;
+    //Serial.println(gap);
+    if(gap < 45 && gap > -45){
+        if(++stadyTimes == 5){
+            stadyTimes = 0;
+            lastValue = 0;
+            return true;
+        }
+        delay(1000);
+    }else{
+        stadyTimes = 0;
+        lastValue = value;
+    }
+    return false;
+}
+
+void triggerSensor(int weight){
+    connectServer(defaultServer, defaultPort);
+    int price = calculatePrice(weight);
+    displayOnScreen(weight,price);
+}
+
+int calculatePrice(int weight){
+    int price = 0;
+    int max = 0;
+    for(int i=0; i<sizeof(limitedWeight); i++){
+        if(weight > limitedWeight[i] && max < limitedWeight[i]){
+            price = overPrice[i];
+            max = limitedWeight[i];
+            
+        }
+    }
+    return price;
+}
+
+int getFakeWeight(int value){
+    int weight = 20; //lb
+    if(value > 1000){
+        weight = 67; //lb
+    }
+    if(value > 1200){
+        weight = 93; //lb
+    }
+    return weight;
+}
+
+//weight:50,price:100;weight:70,price:200
+
+void  respAnalyzer(char* resp){
+    char** level = str_split(resp, ';');
+    for(int i=0; *(level+i); i++){
+        Serial.println(*(level+i));
+        char** entry = str_split(*(level+i), ',');
+        for(int j=0; *(entry+j); j++){
+            Serial.println(*(entry+j));
+            char** kv = str_split(*(entry+j), ':');
+            if(strcmp(*kv, LIMIT) == 0){
+                limitedWeight[i] = (int)String(*(kv+1)).toInt();
+                Serial.println(LIMIT+String(*(kv+1)));
+            }else if(strcmp(*kv, PRICE) == 0){
+                overPrice[i] = (int)String(*(kv+1)).toInt();
+                Serial.println(PRICE+String(*(kv+1)));
+            }
+            free(*kv);
+            free(*(kv+1));
+            free(kv);
+            free(*entry+j);
+        }
+        free(entry);
+        free(*(level+i));
+    }
+   free(resp);
+   free(level);
+   Serial.println(LIMIT+String(limitedWeight[0]));
+   Serial.println(PRICE+String(overPrice[0]));
+   Serial.println(LIMIT+String(limitedWeight[1]));
+   Serial.println(PRICE+String(overPrice[1]));
+}
+
+int connectServer(byte dest[], int port){
+    displayOnScreen("Trying to connect server...");
+    if (connLock == false && client.connect(dest, port))
+      {
+          connLock = true;
+        Serial.println("connected");
+        displayOnScreen("Connected");
+        digitalWrite(led, HIGH);
+        return 0;
+      }
+      else
+      {
+        digitalWrite(led, LOW);
+        return -1;
+      }
+}
+
+void disConnect(){
+    client.stop();
+    connLock = false;
+  //  Serial.println("connect fail");
+    digitalWrite(led, LOW);
+}
+
+
+int commandReceiver(String command){
+   return connectServer(defaultServer, defaultPort);
+}
+
+char** str_split(char* a_str, const char a_delim)
+{
+    char** result    = 0;
+    size_t count     = 0;
+    char* tmp        = a_str;
+    char* last_comma = 0;
+    char delim[2];
+    delim[0] = a_delim;
+    delim[1] = 0;
+
+    /* Count how many elements will be extracted. */
+    while (*tmp)
+    {
+        if (a_delim == *tmp)
+        {
+            count++;
+            last_comma = tmp;
+        }
+        tmp++;
+    }
+
+    /* Add space for trailing token. */
+    count += last_comma < (a_str + strlen(a_str) - 1);
+
+    /* Add space for terminating null string so caller
+       knows where the list of returned strings ends. */
+    count++;
+
+    result = (char**) malloc(sizeof(char*) * count);
+
+    if (result)
+    {
+        size_t idx  = 0;
+        char* token = strtok(a_str, delim);
+
+        while (token)
+        {
+            *(result + idx++) = strdup(token);
+            token = strtok(0, delim);
+        }
+        *(result + idx) = 0;
+    }
+
+    return result;
+}
